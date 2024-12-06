@@ -1,0 +1,131 @@
+ude <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <ArduinoJson.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+// WiFi credentials
+const char* ssid = "yourSSID";      // Replace with your WiFi SSID
+const char* password = "yourPassword"; // Replace with your WiFi password
+
+// Earthquake API URL
+const char* apiUrl = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_week.geojson";
+//const char* apiUrl = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson";
+// OLED setup
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(D2, D1);
+  // Initialize OLED
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("OLED initialization failed!");
+    while (true);
+  }
+  display.clearDisplay();
+  display.display();
+
+  // Connect to WiFi
+  displayText("Connecting to WiFi...");
+  connectWiFi();
+
+  // Fetch and display earthquake data
+  displayText("Fetching data...");
+  fetchEarthquakeData();
+}
+
+void loop() {
+  // No loop actions required for now
+}
+
+void connectWiFi() {
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected!");
+}
+
+void fetchEarthquakeData() {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure client;
+    client.setInsecure(); // Use this for insecure HTTPS connections
+
+    HTTPClient https;
+    if (https.begin(client, apiUrl)) { // Begin HTTPS connection
+      int httpCode = https.GET(); // Send GET request
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = https.getString();
+        parseAndDisplayData(payload);
+      } else {
+        displayText("HTTP Error: " + String(httpCode));
+        Serial.println("HTTP Error: " + String(httpCode));
+      }
+      https.end();
+    } else {
+      displayText("HTTPS connection failed!");
+      Serial.println("HTTPS connection failed!");
+    }
+  } else {
+    displayText("WiFi not connected!");
+    Serial.println("WiFi not connected!");
+  }
+}
+
+void parseAndDisplayData(const String& jsonData) {
+  StaticJsonDocument<2048> doc;
+  DeserializationError error = deserializeJson(doc, jsonData);
+
+  if (error) {
+    displayText("JSON parse error!");
+    Serial.println("JSON parse error: " + String(error.c_str()));
+    return;
+  }
+
+  JsonObject feature = doc["features"][0]["properties"];
+  if (!feature.isNull()) {
+    float mag = feature["mag"]; // Magnitude
+    String place = feature["place"]; // Location
+    unsigned long long timeMillis = feature["time"]; // Time in ms
+
+    String readableTime = convertTime(timeMillis);
+
+    // Display on OLED
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+
+    display.println("Mag: " + String(mag, 1));
+    display.println("Loc: " + place);
+    display.println("Time: " + readableTime);
+
+    display.display();
+  } else {
+    displayText("No data available.");
+    Serial.println("No earthquake data in feed.");
+  }
+}
+
+String convertTime(unsigned long long timeMillis) {
+  time_t rawTime = timeMillis / 1000;
+  struct tm* timeInfo = gmtime(&rawTime);
+  if (timeInfo == nullptr) return "Invalid Time";
+
+  char buffer[26];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeInfo);
+  return String(buffer);
+}
+
+void displayText(String text) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println(text);
+  display.display();
+}
